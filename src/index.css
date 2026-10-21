@@ -1,0 +1,97 @@
+@import "tailwindcss";
+@theme {
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Fraunces Variable", Georgia, serif;
+  --color-page: #f3eee3;
+  --color-brand-50: #f1f6f4;
+  --color-brand-100: #dde9e4;
+  --color-brand-200: #bcd3ca;
+  --color-brand-300: #93b5a8;
+  --color-brand-400: #6a9585;
+  --color-brand-500: #4c7a69;
+  --color-brand-600: #3a6254;
+  --color-brand-700: #2f4f44;
+  --color-brand-800: #254036;
+  --color-brand-900: #1b2f28;
+  --color-sage-50: #f3f6f1;
+  --color-sage-100: #e3ebdf;
+  --color-sage-200: #c8d7c0;
+  --color-sage-300: #a6bd9b;
+  --color-sage-400: #86a278;
+  --color-sage-500: #6b8a5e;
+  --color-sage-600: #56724b;
+  --color-sage-700: #445a3c;
+  --color-sage-800: #384a32;
+  --color-sage-900: #2e3c2a;
+  --color-clay-50: #fbf4f1;
+  --color-clay-100: #f5e4dd;
+  --color-clay-200: #ebc9bc;
+  --color-clay-300: #dca493;
+  --color-clay-400: #c97f6a;
+  --color-clay-500: #b66150;
+  --color-clay-600: #9a4c3d;
+  --color-clay-700: #7d3d31;
+  --color-clay-800: #653329;
+  --color-clay-900: #542d25;
+  --color-sand-50: #fbf8f1;
+  --color-sand-100: #f4ecd9;
+  --color-sand-200: #e8d8b4;
+  --color-sand-300: #d9c089;
+  --color-sand-400: #c8a65e;
+  --color-sand-500: #b38c43;
+  --color-sand-600: #967138;
+  --color-sand-700: #78592f;
+  --color-sand-800: #634a2b;
+  --color-sand-900: #543f27;
+  --color-dusk-100: #e0e7ee;
+  --color-dusk-700: #3f5468;
+  --color-plum-100: #ece1e8;
+  --color-plum-700: #6b4560;
+  --color-olive-100: #ebecd5;
+  --color-olive-700: #5c5f2a;
+}
+body { @apply bg-page text-stone-900 antialiased; font-variant-numeric: tabular-nums; }
+:focus-visible { @apply outline-2 outline-offset-2 outline-brand-600; }
+
+/* Clickable affordance + press feedback for every button/link */
+button, [role="button"], [role="tab"], select, summary, a[href], label:has(input[type="checkbox"]) { cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+button:disabled { cursor: not-allowed; }
+button, a[href] { transition: transform .22s cubic-bezier(.34,1.56,.64,1), background-color .15s ease, filter .15s ease, box-shadow .15s ease; }
+button:not(:disabled):active, a[href]:active { transform: scale(0.95); filter: brightness(0.92); }
+
+/* Layered shadows for a raised, 3D card feel: edge highlight + tight contact shadow + soft ambient shadow */
+@utility shadow-3d {
+  box-shadow: 0 1px 0 rgb(255 255 255 / .9) inset, 0 1px 2px rgb(28 25 23 / .07), 0 4px 8px -2px rgb(28 25 23 / .08), 0 14px 28px -8px rgb(28 25 23 / .14);
+}
+@utility shadow-3d-color {
+  box-shadow: 0 1px 0 rgb(255 255 255 / .2) inset, 0 -3px 0 rgb(0 0 0 / .14) inset, 0 2px 3px rgb(28 25 23 / .15), 0 14px 28px -8px rgb(28 25 23 / .4);
+}
+.shadow-3d, .shadow-3d-color { transition: transform .18s ease, box-shadow .18s ease; }
+a > .shadow-3d:hover, a > .shadow-3d-color:hover, a.shadow-3d-color:hover { transform: translateY(-2px); }
+
+/* ---- Motion (CRED-style: soft overshoot, staggered reveals, numbers that count up) ---- */
+@keyframes rise { from { opacity: 0; transform: translateY(18px) scale(.97) } to { opacity: 1; transform: none } }
+@keyframes pageIn { from { opacity: 0; transform: translateY(10px) } to { opacity: 1; transform: none } }
+@keyframes sheet { from { opacity: 0; transform: translateY(48px) scale(.98) } to { opacity: 1; transform: none } }
+@keyframes fade { from { opacity: 0 } to { opacity: 1 } }
+@keyframes growX { from { transform: scaleX(0) } to { transform: scaleX(1) } }
+@keyframes growY { from { transform: scaleY(0) } to { transform: scaleY(1) } }
+@keyframes toastIn { from { opacity: 0; transform: translateY(24px) scale(.9) } to { opacity: 1; transform: none } }
+/* `backwards` (not `both`) so hover transforms still work after the animation ends */
+.rise { animation: rise .6s cubic-bezier(.2,.8,.2,1) backwards; animation-delay: calc(var(--i, 0) * 70ms) }
+.page { animation: pageIn .4s cubic-bezier(.2,.8,.2,1) }
+.sheet { animation: sheet .45s cubic-bezier(.22,1.15,.36,1) }
+.fade { animation: fade .25s ease-out }
+.toast-in { animation: toastIn .4s cubic-bezier(.34,1.56,.64,1) }
+.growX { transform-origin: left; animation: growX 1s cubic-bezier(.2,.8,.2,1) .25s backwards }
+.growY { transform-origin: bottom; animation: growY .9s cubic-bezier(.2,.8,.2,1) backwards; animation-delay: calc(.2s + var(--i, 0) * 80ms) }
+@media (prefers-reduced-motion: reduce) {
+  .rise, .page, .sheet, .fade, .toast-in, .growX, .growY, .animate-pulse, .animate-spin { animation: none !important }
+  * { transition-duration: .01ms !important }
+}
+
+/* date/month pickers: keep the native calendar icon off the edge */
+input[type="date"], input[type="month"] { padding-right: 1rem; }
+
+/* Light only: stops the browser from drawing native controls (date pickers, scrollbars) dark on dark-mode computers */
+:root { color-scheme: light; }
