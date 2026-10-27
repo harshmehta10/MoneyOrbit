@@ -34,6 +34,13 @@ export async function mockRequest(method, fullPath, body = {}) {
     db.users.push(user)
     // pending group invites for this email become memberships
     ;(db.invites ||= []).filter((i) => i.email === user.email).forEach((i) => db.members.push({ group_id: i.group_id, user_id: user.user_id, role: 'member' }))
+    ;(db.invites || []).filter((i) => i.email === user.email).forEach((i) => db.gexp.filter((e) => e.paid_by_invite === i.invite_id).forEach((e) => { delete e.paid_by_invite; e.paid_by = user.user_id }))
+    ;(db.invites || []).filter((i) => i.email === user.email).forEach((i) =>
+      db.splits.filter((s) => s.invite_id === i.invite_id).forEach((s) => {
+        const ge = db.gexp.find((e) => e.group_expense_id === s.group_expense_id)
+        delete s.invite_id; s.user_id = user.user_id
+        db.expenses.push({ expense_id: db.id++, user_id: user.user_id, category_id: ge.category_id, amount: s.share_amount, expense_date: ge.expense_date, description: `${ge.description} (${db.groups.find((g) => g.group_id === ge.group_id).name})`, split_id: s.split_id })
+      }))
     db.invites = db.invites.filter((i) => i.email !== user.email)
     localStorage.setItem('mo_token', 'u' + user.user_id)
     return out({ token: 'u' + user.user_id, user: pub(user) })
@@ -152,6 +159,7 @@ export async function mockRequest(method, fullPath, body = {}) {
     return out({ status: 'added' })
   }
   if ((x = m('DELETE /groups/(\\d+)/invites/(\\d+)'))) {
+    if (balances(db, +x[1]).find((b) => b.invite_id === +x[2])?.balance) fail('This person has unsettled dues.')
     db.invites = db.invites.filter((i) => i.invite_id !== +x[2])
     return out(null)
   }
@@ -164,31 +172,33 @@ export async function mockRequest(method, fullPath, body = {}) {
   if ((x = m('GET /groups/(\\d+)/expenses'))) {
     const gid = +x[1]
     return db.gexp.filter((e) => e.group_id === gid).sort((a, b) => b.expense_date.localeCompare(a.expense_date)).map((e) => ({
-      ...e, category: cat(e.category_id), paid_by_name: name(e.paid_by),
-      splits: db.splits.filter((s) => s.group_expense_id === e.group_expense_id).map((s) => ({ ...s, name: name(s.user_id) })),
+      ...e, category: cat(e.category_id), paid_by_name: e.paid_by_invite ? db.invites.find((i) => i.invite_id === e.paid_by_invite)?.email : name(e.paid_by),
+      splits: db.splits.filter((s) => s.group_expense_id === e.group_expense_id).map((s) => ({ ...s, name: s.invite_id ? db.invites.find((i) => i.invite_id === s.invite_id)?.email : name(s.user_id) })),
     }))
   }
   if ((x = m('POST /groups/(\\d+)/expenses'))) {
     const gid = +x[1]
     const amount = +body.amount
-    const ids = body.splits.map((s) => s.user_id)
+    const key = (s) => s.user_id ?? 'i' + s.invite_id
+    const ids = body.splits.map(key)
     let shares
     if (body.split_type === 'equal') {
       const each = Math.floor((amount * 100) / ids.length) / 100
-      shares = ids.map((id) => ({ user_id: id, share_amount: each }))
+      shares = body.splits.map((s) => ({ ...(s.user_id ? { user_id: s.user_id } : { invite_id: s.invite_id }), share_amount: each }))
       const left = r2(amount - each * ids.length)
-      const p = shares.find((s) => s.user_id === +body.paid_by) || shares[0]
+      const p = shares.find((s) => (body.paid_by_invite ? s.invite_id === +body.paid_by_invite : s.user_id === +body.paid_by)) || shares[0]
       p.share_amount = r2(p.share_amount + left) // BR6: leftover paise go to payer
     } else {
-      shares = body.splits.map((s) => ({ user_id: s.user_id, share_amount: +s.share_amount }))
+      shares = body.splits.map((s) => ({ ...(s.user_id ? { user_id: s.user_id } : { invite_id: s.invite_id }), share_amount: +s.share_amount }))
       if (r2(shares.reduce((a, s) => a + s.share_amount, 0)) !== r2(amount)) fail('Custom shares must add up to the bill amount.')
     }
-    const ge = { group_expense_id: db.id++, group_id: gid, paid_by: +body.paid_by, category_id: +body.category_id, amount, split_type: body.split_type, description: body.description, expense_date: body.expense_date }
+    const ge = { group_expense_id: db.id++, group_id: gid, ...(body.paid_by_invite ? { paid_by_invite: +body.paid_by_invite } : { paid_by: +body.paid_by }), category_id: +body.category_id, amount, split_type: body.split_type, description: body.description, expense_date: body.expense_date }
     db.gexp.push(ge)
     const gname = db.groups.find((g) => g.group_id === gid).name
     shares.forEach((s) => {
       const split = { split_id: db.id++, group_expense_id: ge.group_expense_id, ...s }
       db.splits.push(split)
+      if (s.invite_id) return // pending: personal expense is created when they register
       const e = { expense_id: db.id++, user_id: s.user_id, category_id: ge.category_id, amount: s.share_amount, expense_date: ge.expense_date, description: `${ge.description} (${gname})`, split_id: split.split_id }
       db.expenses.push(e)
       if (s.user_id !== uid) note(s.user_id, `${me.name} added "${ge.description}" in ${gname}.`)
@@ -196,19 +206,24 @@ export async function mockRequest(method, fullPath, body = {}) {
     })
     return out(ge)
   }
-  if ((x = m('DELETE /groups/(\\d+)/expenses/(\\d+)'))) {
-    const ge = db.gexp.find((e) => e.group_expense_id === +x[2])
-    const g = db.groups.find((y) => y.group_id === +x[1])
-    if (!ge || (ge.paid_by !== uid && g.created_by !== uid)) fail('Only the payer or the group creator can delete a bill.')
+  if ((x = m('(DELETE|PUT) /groups/(\\d+)/expenses/(\\d+)'))) {
+    const verb = x[1] === 'PUT' ? 'edit' : 'delete'
+    const ge = db.gexp.find((e) => e.group_expense_id === +x[3] && e.group_id === +x[2])
+    const g = db.groups.find((y) => y.group_id === +x[2])
+    if (!ge || (ge.paid_by !== uid && g.created_by !== uid)) fail(`Only the payer or the group creator can ${verb} a bill.`)
+    const before = localStorage.getItem(KEY)
     const sids = db.splits.filter((s) => s.group_expense_id === ge.group_expense_id).map((s) => s.split_id)
     db.expenses = db.expenses.filter((e) => !sids.includes(e.split_id))
     db.splits = db.splits.filter((s) => !sids.includes(s.split_id))
     db.gexp = db.gexp.filter((e) => e !== ge)
-    return out(null)
+    if (verb === 'delete') return out(null)
+    // mock only: edit = remove + re-create; restore the old bill if the new one is invalid (a real API updates in place, same id)
+    save(db)
+    try { return await mockRequest('POST', `/groups/${x[2]}/expenses`, body) } catch (err) { localStorage.setItem(KEY, before); throw err }
   }
   if ((x = m('GET /groups/(\\d+)/balances'))) {
-    const bal = balances(db, +x[1]).map((b) => ({ ...b, name: name(b.user_id) }))
-    return { balances: bal, plan: plan(bal).map((p) => ({ ...p, from_name: name(p.from), to_name: name(p.to) })) }
+    const bal = balances(db, +x[1]).map((b) => ({ ...b, name: b.invite_id ? db.invites.find((i) => i.invite_id === b.invite_id).email : name(b.user_id), pending: !!b.invite_id }))
+    return { balances: bal, plan: plan(bal.filter((b) => !b.pending)).map((p) => ({ ...p, from_name: name(p.from), to_name: name(p.to) })) }
   }
   if ((x = m('GET /groups/(\\d+)/settlements'))) {
     return db.settlements.filter((s) => s.group_id === +x[1]).map((s) => ({ ...s, payer_name: name(s.payer_id), payee_name: name(s.payee_id) }))
@@ -246,12 +261,13 @@ function budgetAlert(db, uid, e, note) {
 
 function balances(db, gid) {
   const map = Object.fromEntries(db.members.filter((m) => m.group_id === gid).map((m) => [m.user_id, 0]))
+  ;(db.invites || []).filter((i) => i.group_id === gid).forEach((i) => (map['i' + i.invite_id] = 0))
   const add = (id, v) => { if (id in map) map[id] = r2(map[id] + v) }
   const ids = db.gexp.filter((e) => e.group_id === gid).map((e) => e.group_expense_id)
-  db.gexp.filter((e) => e.group_id === gid).forEach((e) => add(e.paid_by, e.amount))
-  db.splits.filter((s) => ids.includes(s.group_expense_id)).forEach((s) => add(s.user_id, -s.share_amount))
+  db.gexp.filter((e) => e.group_id === gid).forEach((e) => add(e.paid_by ?? 'i' + e.paid_by_invite, e.amount))
+  db.splits.filter((s) => ids.includes(s.group_expense_id)).forEach((s) => add(s.user_id ?? 'i' + s.invite_id, -s.share_amount))
   db.settlements.filter((s) => s.group_id === gid).forEach((s) => { add(s.payer_id, s.amount); add(s.payee_id, -s.amount) })
-  return Object.entries(map).map(([id, balance]) => ({ user_id: +id, balance }))
+  return Object.entries(map).map(([id, balance]) => (id[0] === 'i' ? { invite_id: +id.slice(1), balance } : { user_id: +id, balance }))
 }
 
 // Greedy: biggest debtor pays biggest creditor (SRS §8).
@@ -294,7 +310,7 @@ function report(db, type, q, uid, name) {
       return { title: 'Month-over-month trend', columns: ['Month', 'Total'], rows, chart: 'bar' }
     }
     case 'group-expenses':
-      return { title: 'Group expense report', columns: ['Date', 'Description', 'Paid by', 'Amount'], rows: db.gexp.filter((e) => e.group_id === gid && inRange(e.expense_date)).map((e) => [e.expense_date, e.description, name(e.paid_by), e.amount]) }
+      return { title: 'Group expense report', columns: ['Date', 'Description', 'Paid by', 'Amount'], rows: db.gexp.filter((e) => e.group_id === gid && inRange(e.expense_date)).map((e) => [e.expense_date, e.description, e.paid_by_invite ? db.invites.find((i) => i.invite_id === e.paid_by_invite)?.email : name(e.paid_by), e.amount]) }
     case 'group-balance':
       return { title: 'Group balance report', columns: ['Member', 'Net balance'], rows: balances(db, gid).map((b) => [name(b.user_id), b.balance]) }
     case 'settlements':

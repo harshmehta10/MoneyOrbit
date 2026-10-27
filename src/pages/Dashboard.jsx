@@ -7,7 +7,7 @@ import {
   CaretRight,
   Receipt,
   Crown,
-} from '@icons';
+} from "@icons";
 import { useState } from "react";
 import { api } from "../lib/api.js";
 import { inr, dateLabel } from "../lib/format.js";

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { ArrowLeft, ArrowRight, Plus, UserPlus, Trash, HandCoins, UserMinus, Envelope, LinkSimple } from '@icons'
+import { ArrowLeft, ArrowRight, Plus, UserPlus, Trash, PencilSimple, HandCoins, UserMinus, Envelope, LinkSimple } from '@icons'
 import { api } from '../lib/api.js'
 import { inr, today, dateLabel } from '../lib/format.js'
 import { useAuth } from '../context/Auth.jsx'
@@ -43,7 +43,7 @@ export default function GroupDetail() {
         {info.data && (
           <>
             <PageHeader title={info.data.group.name} sub={`${members.length} of 20 members${invites.length ? ` · ${invites.length} invited` : ''}`}>
-              <Button onClick={() => setModal('bill')}><Plus className="size-4" />Add bill</Button>
+              <Button onClick={() => setModal({ bill: null })}><Plus className="size-4" />Add bill</Button>
             </PageHeader>
             {mine !== undefined && (
               <div className={`mb-4 rise rounded-2xl p-4 text-white shadow-3d-color ${mine > 0 ? 'bg-sage-600' : mine < 0 ? 'bg-clay-600' : 'bg-stone-700'}`}>
@@ -66,18 +66,22 @@ export default function GroupDetail() {
                     <ul className="divide-y divide-stone-100">
                       {bills.data.map((b) => (
                         <li key={b.group_expense_id} className="p-3 sm:p-4">
-                          <div className="flex items-start gap-3">
+                          <div className="flex items-center gap-3">
                             <CatIcon name={b.category} />
                             <div className="min-w-0 flex-1">
                               <p className="truncate text-sm font-medium">{b.description}</p>
                               <p className="text-xs text-stone-600">{b.paid_by_name} paid · {b.category} · {dateLabel(b.expense_date)} · {b.split_type}</p>
                               <p className="mt-1 text-xs text-stone-600">{b.splits.map((s) => `${s.name} ${inr(s.share_amount)}`).join(' · ')}</p>
                             </div>
-                            <p className="text-sm font-semibold">{inr(b.amount)}</p>
-                            {(b.paid_by === user.user_id || isCreator) && (
-                              <button aria-label="Delete bill" onClick={() => confirm('Delete this bill?') && act(() => api.del(`/groups/${id}/expenses/${b.group_expense_id}`), 'Bill deleted')}
-                                className="grid size-10 place-items-center rounded-lg text-clay-600 hover:bg-clay-50"><Trash className="size-4" /></button>
-                            )}
+                            <div className="flex shrink-0 items-center gap-1">
+                              <p className="text-sm font-semibold leading-10">{inr(b.amount)}</p>
+                              {(b.paid_by === user.user_id || isCreator) ? (<>
+                                <button aria-label="Edit bill" onClick={() => setModal({ bill: b })}
+                                  className="grid size-10 place-items-center rounded-lg text-stone-600 hover:bg-stone-100"><PencilSimple className="size-4" /></button>
+                                <button aria-label="Delete bill" onClick={() => confirm('Delete this bill?') && act(() => api.del(`/groups/${id}/expenses/${b.group_expense_id}`), 'Bill deleted')}
+                                  className="grid size-10 place-items-center rounded-lg text-clay-600 hover:bg-clay-50"><Trash className="size-4" /></button></>
+                              ) : <span className="w-[5.25rem]" aria-hidden />}
+                            </div>
                           </div>
                         </li>
                       ))}
@@ -94,8 +98,8 @@ export default function GroupDetail() {
                     <h2 className="mb-2 font-semibold">Net balances</h2>
                     <ul className="divide-y divide-stone-100">
                       {bal.data?.balances.map((b) => (
-                        <li key={b.user_id} className="flex items-center gap-3 py-2 text-sm">
-                          <Avatar name={b.name} /><span className="flex-1">{b.name}</span>
+                        <li key={b.user_id ?? 'i' + b.invite_id} className="flex items-center gap-3 py-2 text-sm">
+                          <Avatar name={b.name} /><span className="flex-1 truncate">{b.name}{b.pending && <span className="text-xs text-sand-700"> · invited</span>}</span>
                           <span className={`font-medium ${b.balance > 0 ? 'text-sage-700' : b.balance < 0 ? 'text-clay-700' : ''}`}>
                             {b.balance > 0 ? 'gets ' : b.balance < 0 ? 'owes ' : ''}{inr(Math.abs(b.balance))}
                           </span>
@@ -173,7 +177,7 @@ export default function GroupDetail() {
         )}
       </Status>
 
-      {modal === 'bill' && <BillForm gid={id} members={members} cats={cats} me={user.user_id} onClose={() => setModal(null)} onSaved={() => { setModal(null); refresh() }} />}
+      {modal?.bill !== undefined && <BillForm bill={modal.bill} gid={id} members={members} invites={invites} cats={cats} me={user.user_id} onClose={() => setModal(null)} onSaved={() => { setModal(null); refresh() }} />}
       {modal === 'member' && <MemberForm gid={id} onClose={() => setModal(null)} onSaved={() => { setModal(null); refresh() }} />}
       {modal?.settle && <SettleForm gid={id} members={members} init={modal.settle} onClose={() => setModal(null)} onSaved={() => { setModal(null); refresh() }} />}
     </>
@@ -221,7 +225,7 @@ function SettleForm({ gid, members, init, onClose, onSaved }) {
         </Select>
         <Input label="Amount (₹)" name="amount" inputMode="decimal" required defaultValue={init.amount} />
         <div className="grid grid-cols-2 gap-3">
-          <Input label="Date" name="settled_on" type="date" max={today()} required defaultValue={today()} />
+          <Input label="Date" name="settled_on" type="date" max={today()} required defaultValue={bill?.expense_date || today()} />
           <Select label="Mode" name="mode" defaultValue="UPI"><option>UPI</option><option>Cash</option><option>Bank</option></Select>
         </div>
         <Button loading={busy} className="w-full">Record payment</Button>
@@ -230,35 +234,41 @@ function SettleForm({ gid, members, init, onClose, onSaved }) {
   )
 }
 
-function BillForm({ gid, members, cats, me, onClose, onSaved }) {
+function BillForm({ bill, gid, members, invites, cats, me, onClose, onSaved }) {
   const toast = useToast()
-  const [type, setType] = useState('equal')
-  const [picked, setPicked] = useState(members.map((m) => m.user_id))
-  const [shares, setShares] = useState({})
-  const [amount, setAmount] = useState('')
+  const [type, setType] = useState(bill?.split_type || 'equal')
+  const splitKey = (s) => s.invite_id ? 'i' + s.invite_id : s.user_id
+  // shareable people: members by user_id, pending invitees by invite_id (key 'i<id>')
+  const people = [...members.map((m) => ({ key: m.user_id, name: m.name })), ...invites.map((i) => ({ key: 'i' + i.invite_id, name: i.email, pending: true }))]
+  const [picked, setPicked] = useState(bill ? bill.splits.map(splitKey) : people.map((p) => p.key))
+  const [shares, setShares] = useState(bill ? Object.fromEntries(bill.splits.map((s) => [splitKey(s), s.share_amount])) : {})
+  const [amount, setAmount] = useState(bill ? String(bill.amount) : '')
   const { error, busy, submit, setError } = useForm(onSaved, (f) => {
     if (!(+amount > 0)) throw new Error('Amount must be above zero.')
     if (!picked.length) throw new Error('Pick at least one member to share the bill.')
-    const splits = picked.map((id) => ({ user_id: id, ...(type === 'custom' && { share_amount: +shares[id] || 0 }) }))
+    const splits = picked.map((id) => ({ ...(typeof id === 'string' ? { invite_id: +id.slice(1) } : { user_id: id }), ...(type === 'custom' && { share_amount: +shares[id] || 0 }) }))
     if (type === 'custom' && Math.round(splits.reduce((a, s) => a + s.share_amount, 0) * 100) !== Math.round(+amount * 100))
       throw new Error('Custom shares must add up exactly to the bill amount.')
-    return api.post(`/groups/${gid}/expenses`, { ...f, amount: +amount, split_type: type, splits }).then(() => toast('Bill added'))
+    const { paid_by, ...rest } = f
+    const payer = typeof paid_by === 'string' && paid_by[0] === 'i' ? { paid_by_invite: +paid_by.slice(1) } : { paid_by }
+    const data = { ...rest, ...payer, amount: +amount, split_type: type, splits }
+    return (bill ? api.put(`/groups/${gid}/expenses/${bill.group_expense_id}`, data) : api.post(`/groups/${gid}/expenses`, data)).then(() => toast(bill ? 'Bill updated' : 'Bill added'))
   })
   const toggle = (id) => setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]))
   const sum = picked.reduce((a, id) => a + (+shares[id] || 0), 0)
 
   return (
-    <Modal title="Add shared bill" onClose={onClose}>
+    <Modal title={bill ? 'Edit shared bill' : 'Add shared bill'} onClose={onClose}>
       <form onSubmit={submit} className="space-y-4">
         <Alert>{error}</Alert>
-        <Input label="Description" name="description" required maxLength={255} placeholder="e.g. Hotel booking" autoFocus />
+        <Input label="Description" name="description" required maxLength={255} placeholder="e.g. Hotel booking" autoFocus defaultValue={bill?.description} />
         <div className="grid grid-cols-2 gap-3">
           <Input label="Amount (₹)" inputMode="decimal" required value={amount} onChange={(e) => setAmount(e.target.value)} />
           <Input label="Date" name="expense_date" type="date" max={today()} required defaultValue={today()} />
         </div>
         <div className="grid grid-cols-2 gap-3">
-          <Select label="Paid by" name="paid_by" defaultValue={me}>{members.map((m) => <option key={m.user_id} value={m.user_id}>{m.name}</option>)}</Select>
-          <Select label="Category" name="category_id" required defaultValue=""><option value="" disabled>Choose…</option>{cats.map((c) => <option key={c.category_id} value={c.category_id}>{c.name}</option>)}</Select>
+          <Select label="Paid by" name="paid_by" defaultValue={bill ? (bill.paid_by_invite ? 'i' + bill.paid_by_invite : bill.paid_by) : me}>{people.map((m) => <option key={m.key} value={m.key}>{m.name}{m.pending ? ' (invited)' : ''}</option>)}</Select>
+          <Select label="Category" name="category_id" required defaultValue={bill?.category_id ?? ""}><option value="" disabled>Choose…</option>{cats.map((c) => <option key={c.category_id} value={c.category_id}>{c.name}</option>)}</Select>
         </div>
         <div className="flex gap-1 rounded-lg bg-stone-200/60 p-1">
           {['equal', 'custom'].map((t) => (
@@ -268,15 +278,15 @@ function BillForm({ gid, members, cats, me, onClose, onSaved }) {
         </div>
         <fieldset className="space-y-2">
           <legend className="mb-1 text-sm font-medium text-stone-700">Shared between</legend>
-          {members.map((m) => (
-            <div key={m.user_id} className="flex items-center gap-3">
+          {people.map((m) => (
+            <div key={m.key} className="flex items-center gap-3">
               <label className="flex min-h-11 flex-1 items-center gap-2 text-sm">
-                <input type="checkbox" className="size-4 accent-brand-600" checked={picked.includes(m.user_id)} onChange={() => toggle(m.user_id)} />
-                <span className="truncate">{m.name}</span>
+                <input type="checkbox" className="size-4 accent-brand-600" checked={picked.includes(m.key)} onChange={() => toggle(m.key)} />
+                <span className="truncate">{m.name}{m.pending && <span className="text-xs text-sand-700"> · invited</span>}</span>
               </label>
-              {type === 'custom' && picked.includes(m.user_id) && (
-                <input aria-label={`Share of ${m.name}`} inputMode="decimal" placeholder="0.00" value={shares[m.user_id] ?? ''}
-                  onChange={(e) => setShares({ ...shares, [m.user_id]: e.target.value })}
+              {type === 'custom' && picked.includes(m.key) && (
+                <input aria-label={`Share of ${m.name}`} inputMode="decimal" placeholder="0.00" value={shares[m.key] ?? ''}
+                  onChange={(e) => setShares({ ...shares, [m.key]: e.target.value })}
                   className="min-h-11 w-28 rounded-lg border border-stone-300 px-3 text-sm outline-none focus:border-brand-600" />
               )}
             </div>
@@ -284,7 +294,7 @@ function BillForm({ gid, members, cats, me, onClose, onSaved }) {
           {type === 'custom' && <p className="text-xs text-stone-600">Shares total {inr(sum)} of {inr(amount)}</p>}
           {type === 'equal' && picked.length > 0 && +amount > 0 && <p className="text-xs text-stone-600">About {inr(amount / picked.length)} each</p>}
         </fieldset>
-        <Button loading={busy} className="w-full">Save bill</Button>
+        <Button loading={busy} className="w-full">{bill ? 'Save changes' : 'Save bill'}</Button>
       </form>
     </Modal>
   )
